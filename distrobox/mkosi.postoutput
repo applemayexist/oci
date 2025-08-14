@@ -1,0 +1,104 @@
+#!/usr/bin/python3
+
+import hashlib
+import json
+import os
+from ctypes import CDLL, POINTER, c_char_p, c_int, c_uint
+from io import TextIOWrapper
+from os import O_CLOEXEC, O_TMPFILE, environ
+from os.path import join
+from typing import Final, NamedTuple
+
+AT_EMPTY_PATH: Final = 0x1000
+AT_FDCWD: Final = -100
+JSON_COMPACT_SEP: Final = (",", ":")
+
+c: Final = CDLL("libc.so.6")
+c.__errno_location.restype = POINTER(c_int)
+
+
+def check_errno(ret: int, *args) -> int:
+    if ret == -1:
+        raise OSError(c.__errno_location()[0])
+    return ret
+
+
+c.linkat.argtypes = (c_int, c_char_p, c_int, c_char_p, c_int)
+c.linkat.errcheck = check_errno
+c.linkat.restype = c_int
+c.open.argtypes = (c_char_p, c_int, c_uint)
+c.open.errcheck = check_errno
+c.open.restype = c_int
+
+
+class HasherWriter:
+    __slots__ = ("_writer", "_hasher", "written")
+
+    def __init__(self, writer: TextIOWrapper, hasher=None) -> None:
+        self._hasher = hasher or hashlib.sha256()
+        self._writer = writer
+        self.written = 0
+
+    def write(self, buffer) -> int:
+        self._hasher.update(buffer.encode())
+        self.written += len(buffer)
+        return self._writer.write(buffer)
+
+    def digest(self) -> str:
+        return self._hasher.hexdigest()
+
+    def __getattr__(self, attr):
+        return getattr(self._writer, attr)
+
+
+class BlobInfo(NamedTuple):
+    digest: str
+    size: int
+
+
+def write_blob_and_link(json_obj) -> BlobInfo:
+    writer = HasherWriter(
+        open(c.open(blob_dir.encode(), os.O_WRONLY | O_CLOEXEC | O_TMPFILE, 0o644), "w")
+    )
+    json.dump(json_obj, writer, separators=JSON_COMPACT_SEP)
+    digest = writer.digest()
+    c.linkat(
+        writer.fileno(), b"", AT_FDCWD, join(blob_dir, digest).encode(), AT_EMPTY_PATH
+    )
+    return BlobInfo(digest, writer.written)
+
+
+oci_dir = join(environ["OUTPUTDIR"], environ["IMAGE_ID"])
+blob_dir = join(oci_dir, "blobs/sha256")
+
+index_file = open(join(oci_dir, "index.json"), "r+")
+index_file.seek(0)
+index = json.load(index_file)
+
+manifest_path = join(blob_dir, index["manifests"][0]["digest"].removeprefix("sha256:"))
+manifest = json.load(open(manifest_path, "r"))
+
+config_path = join(blob_dir, manifest["config"]["digest"].removeprefix("sha256:"))
+config = json.load(open(config_path, "r"))
+
+config["config"]["Cmd"] = ("/usr/bin/bash",)
+
+info = write_blob_and_link(config)
+
+manifest["config"]["digest"] = "sha256:" + info.digest
+manifest["config"]["size"] = info.size
+
+info = write_blob_and_link(manifest)
+os.unlink(config_path)
+
+index["manifests"][0]["digest"] = "sha256:" + info.digest
+index["manifests"][0]["size"] = info.size
+
+# TODO: don't hardcode this value here
+index["manifests"][0].setdefault("annotations", {})[
+    "org.opencontainers.image.ref.name"
+] = "ghcr.io/applemayexist/distrobox:latest"
+
+index_file.seek(0)
+json.dump(index, index_file, separators=JSON_COMPACT_SEP)
+os.unlink(manifest_path)

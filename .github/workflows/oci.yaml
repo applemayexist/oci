@@ -20,12 +20,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install mkosi
+        uses: systemd/mkosi@v25.3
+
+      - name: Install other dependencies
+        run: sudo apt install -y libarchive-tools
+
       - name: Build image
-        uses: redhat-actions/buildah-build@v2
-        with:
-          tags: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:latest
-          context: ${{ matrix.image }}
-          containerfiles: ${{ matrix.image }}/Containerfile
+        run: |
+          cd ${{ matrix.image }}
+          mkosi -f
+          bsdtar --strip-components=2 -c mkosi.output/${{ matrix.image }} | podman image load
 
       - name: Push to ghcr.io
         if: ${{ github.ref_name == 'main' }}

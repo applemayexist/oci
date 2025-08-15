@@ -97,7 +97,7 @@ index["manifests"][0]["size"] = info.size
 # TODO: don't hardcode this value here
 index["manifests"][0].setdefault("annotations", {})[
     "org.opencontainers.image.ref.name"
-] = "ghcr.io/applemayexist/distrobox:latest"
+] = "ghcr.io/applemayexist/toolbx:latest"
 
 index_file.seek(0)
 json.dump(index, index_file, separators=JSON_COMPACT_SEP)

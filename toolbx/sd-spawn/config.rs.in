@@ -1,0 +1,3 @@
+use std::ffi;
+
+pub const SYSTEMD_RUN_PATH: &ffi::CStr = c@SYSTEMD_RUN_PATH@;

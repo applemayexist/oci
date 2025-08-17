@@ -1,0 +1,6 @@
+#!/usr/bin/bash
+set -o pipefail
+set -e
+
+CC=cc meson setup "$SRCDIR"/sd-spawn "$BUILDDIR" -Dprefix=/usr -Dbuildtype=release -Db_lto=true
+RUSTC_BOOTSTRAP=1 exec ninja install -C"$BUILDDIR"
